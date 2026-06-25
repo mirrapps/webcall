@@ -378,6 +378,64 @@
                 text-decoration: none;
             }
 
+            .toggle-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+            }
+
+            .toggle-label {
+                font-size: 0.875rem;
+                color: var(--text);
+            }
+
+            .toggle {
+                position: relative;
+                display: inline-block;
+                width: 36px;
+                height: 20px;
+                flex-shrink: 0;
+            }
+
+            .toggle input {
+                opacity: 0;
+                width: 0;
+                height: 0;
+            }
+
+            .slider {
+                position: absolute;
+                inset: 0;
+                background: var(--surface-2);
+                border: 1px solid var(--border);
+                border-radius: 20px;
+                cursor: pointer;
+                transition: background 0.2s;
+            }
+
+            .slider::before {
+                content: "";
+                position: absolute;
+                width: 14px;
+                height: 14px;
+                left: 2px;
+                top: 2px;
+                background: var(--text-muted);
+                border-radius: 50%;
+                transition:
+                    transform 0.2s,
+                    background 0.2s;
+            }
+
+            .toggle input:checked + .slider {
+                background: var(--accent-dim);
+                border-color: var(--accent);
+            }
+            .toggle input:checked + .slider::before {
+                transform: translateX(16px);
+                background: var(--accent);
+            }
+
             audio {
                 display: none;
             }
@@ -525,6 +583,56 @@
                 </div>
             </div>
 
+            <!-- Audio settings (pre-call) -->
+            <div class="card" id="audioSettings">
+                <label>Audio processing</label>
+                <div
+                    style="
+                        display: flex;
+                        flex-direction: column;
+                        gap: 0.5rem;
+                        margin-top: 0.25rem;
+                    "
+                >
+                    <div class="toggle-row">
+                        <span class="toggle-label">Echo cancellation</span>
+                        <label class="toggle"
+                            ><input type="checkbox" id="chkEcho" checked /><span
+                                class="slider"
+                            ></span
+                        ></label>
+                    </div>
+                    <div class="toggle-row">
+                        <span class="toggle-label">Noise suppression</span>
+                        <label class="toggle"
+                            ><input
+                                type="checkbox"
+                                id="chkNoise"
+                                checked /><span class="slider"></span
+                        ></label>
+                    </div>
+                    <div class="toggle-row">
+                        <span class="toggle-label">Auto gain control</span>
+                        <label class="toggle"
+                            ><input type="checkbox" id="chkGain" checked /><span
+                                class="slider"
+                            ></span
+                        ></label>
+                    </div>
+                </div>
+                <p
+                    style="
+                        font-size: 0.725rem;
+                        color: var(--text-muted);
+                        margin-top: 0.75rem;
+                        line-height: 1.5;
+                    "
+                >
+                    Applied when mic is captured. Use headphones if echo
+                    persists.
+                </p>
+            </div>
+
             <!-- In-call controls -->
             <div class="call-controls" id="callControls" style="display: none">
                 <button class="btn btn-danger" id="btnMute">Mute mic</button>
@@ -575,6 +683,11 @@
             const canvas = document.getElementById("canvas");
             const remoteAudio = document.getElementById("remoteAudio");
             const toastEl = document.getElementById("toast");
+
+            const chkEcho = document.getElementById("chkEcho");
+            const chkNoise = document.getElementById("chkNoise");
+            const chkGain = document.getElementById("chkGain");
+            const audioSettings = document.getElementById("audioSettings");
 
             // ── State ───────────────────────────────────────────────────────────────
             let pc = null;
@@ -705,9 +818,14 @@
             async function getLocalStream() {
                 if (localStream) return localStream;
                 localStream = await navigator.mediaDevices.getUserMedia({
-                    audio: true,
+                    audio: {
+                        echoCancellation: chkEcho.checked,
+                        noiseSuppression: chkNoise.checked,
+                        autoGainControl: chkGain.checked,
+                    },
                     video: false,
                 });
+                audioSettings.style.display = "none";
                 return localStream;
             }
 
@@ -860,6 +978,7 @@
                 btnMute.textContent = "Mute mic";
                 remoteOfferInput.value = "";
                 remoteAnswerInput.value = "";
+                audioSettings.style.display = "block";
                 setStatus("idle", "Idle");
             }
         </script>
