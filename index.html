@@ -618,6 +618,47 @@
         >
           Applied when mic is captured. Use headphones if echo persists.
         </p>
+        <label style="margin-top: 1rem">TURN relay (optional)</label>
+        <div
+          style="
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+          "
+        >
+          <input type="text" id="turnUrl" placeholder="turn:your-server:3478" />
+          <div class="connect-row">
+            <input
+              type="text"
+              id="turnUser"
+              placeholder="Username (if required)"
+            />
+            <input
+              type="text"
+              id="turnCred"
+              placeholder="Credential (if required)"
+            />
+          </div>
+        </div>
+        <p
+          style="
+            font-size: 0.725rem;
+            color: var(--text-muted);
+            margin-top: 0.5rem;
+            line-height: 1.5;
+          "
+        >
+          Needed when peers are behind strict NAT. Set before starting a call.
+        </p>
+      </div>
+
+      <!-- Session controls (signaling / connecting) -->
+      <div class="call-controls" id="sessionControls" style="display: none">
+        <button class="btn btn-primary" id="btnRetry" style="display: none">
+          Retry connection
+        </button>
+        <button class="btn btn-danger" id="btnReset">Start over</button>
       </div>
 
       <!-- In-call controls -->
@@ -673,10 +714,17 @@
       const chkNoise = document.getElementById("chkNoise");
       const chkGain = document.getElementById("chkGain");
       const audioSettings = document.getElementById("audioSettings");
+      const turnUrl = document.getElementById("turnUrl");
+      const turnUser = document.getElementById("turnUser");
+      const turnCred = document.getElementById("turnCred");
+      const sessionControls = document.getElementById("sessionControls");
+      const btnRetry = document.getElementById("btnRetry");
+      const btnReset = document.getElementById("btnReset");
 
       // ── State ───────────────────────────────────────────────────────────────
       let pc = null;
       let localStream = null;
+      let callPhase = "idle"; // idle | signaling | connecting | connected
       let muted = false;
       let timerInterval = null;
       let timerSeconds = 0;
@@ -779,21 +827,74 @@
       }
 
       // ── WebRTC core ─────────────────────────────────────────────────────────
-      const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+      function buildIceServers() {
+        const servers = [{ urls: "stun:stun.l.google.com:19302" }];
+        const url = turnUrl.value.trim();
+        if (url) {
+          const turn = { urls: url };
+          const user = turnUser.value.trim();
+          const cred = turnCred.value.trim();
+          if (user) turn.username = user;
+          if (cred) turn.credential = cred;
+          servers.push(turn);
+        }
+        return servers;
+      }
+
+      function updateSessionControls() {
+        const inSession = callPhase !== "idle";
+        sessionControls.style.display =
+          inSession && callPhase !== "connected" ? "flex" : "none";
+        callControls.style.display =
+          callPhase === "connected" ? "flex" : "none";
+        const canRetry =
+          pc &&
+          pc.remoteDescription &&
+          (callPhase === "connecting" || pc.iceConnectionState === "failed");
+        btnRetry.style.display = canRetry ? "block" : "none";
+      }
+
+      function handleConnectionFailed() {
+        if (callPhase === "signaling") return;
+        callPhase = "connecting";
+        setStatus(
+          "error",
+          "Connection failed",
+          "try Retry or add TURN, then Start over",
+        );
+        updateSessionControls();
+        toast("Connection failed — offer and answer are kept");
+      }
+
+      async function retryConnection() {
+        if (!pc?.remoteDescription) {
+          toast("Paste and connect the answer first");
+          return;
+        }
+        try {
+          setStatus("calling", "Retrying…");
+          await pc.restartIce();
+          toast("Retrying connection…");
+        } catch (err) {
+          toast("Retry failed: " + err.message);
+        }
+      }
 
       function createPeer() {
-        const p = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        const p = new RTCPeerConnection({ iceServers: buildIceServers() });
 
         p.oniceconnectionstatechange = () => {
+          if (p !== pc) return;
           const s = p.iceConnectionState;
           if (s === "connected" || s === "completed") {
+            callPhase = "connected";
             setStatus("connected", "Connected", "audio active");
             startTimer();
-            callControls.style.display = "flex";
-          } else if (s === "disconnected") {
+            updateSessionControls();
+          } else if (s === "disconnected" && callPhase === "connected") {
             setStatus("calling", "Reconnecting…");
-          } else if (s === "failed" || s === "closed") {
-            hangup();
+          } else if (s === "failed") {
+            handleConnectionFailed();
           }
         };
 
@@ -844,6 +945,8 @@
           offerDisplay.textContent = encoded;
           offerDisplay.classList.remove("empty");
           remoteAnswerSection.style.display = "block";
+          callPhase = "signaling";
+          updateSessionControls();
           setStatus("calling", "Waiting for answer", "share offer above");
         } catch (err) {
           hangup();
@@ -871,6 +974,8 @@
         }
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(answer));
+          callPhase = "connecting";
+          updateSessionControls();
           setStatus("calling", "Connecting…");
         } catch (err) {
           toast("Failed: " + err.message);
@@ -908,6 +1013,8 @@
           const encoded = toBase64(pc.localDescription);
           answerDisplay.value = encoded;
           answerSection.style.display = "block";
+          callPhase = "connecting";
+          updateSessionControls();
           setStatus("calling", "Waiting for caller", "share answer above");
         } catch (err) {
           hangup();
@@ -932,6 +1039,8 @@
       });
 
       btnHangup.addEventListener("click", hangup);
+      btnReset.addEventListener("click", hangup);
+      btnRetry.addEventListener("click", retryConnection);
 
       function hangup() {
         if (pc) {
@@ -942,9 +1051,11 @@
           localStream.getTracks().forEach((t) => t.stop());
           localStream = null;
         }
+        callPhase = "idle";
         stopTimer();
         stopVisualizer();
         remoteAudio.srcObject = null;
+        sessionControls.style.display = "none";
         callControls.style.display = "none";
         answerSection.style.display = "none";
         remoteAnswerSection.style.display = "none";
@@ -954,6 +1065,7 @@
         btnJoin.disabled = false;
         muted = false;
         btnMute.textContent = "Mute mic";
+        btnRetry.style.display = "none";
         remoteOfferInput.value = "";
         remoteAnswerInput.value = "";
         audioSettings.style.display = "block";
